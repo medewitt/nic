@@ -1,0 +1,140 @@
+---
+title: "Regression Examples"
+author: "Michael DeWitt"
+date: "12/7/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+A simple exploration of different regression tools for doing variable importance and variable selection
+
+# Generating Fake Data
+
+First, I am going to load some required packages and then make some fake data for exploratory purposes:
+
+```{r}
+library(tidyverse)
+
+p <- 26 # parameters
+n <- 600 # data points
+
+X <- matrix(rnorm(p * n), ncol = p)
+
+# Make some true coeficients 
+true_beta <- runif(n = p, -5, 5)
+
+# I am going to make a few of them zero so that this works
+
+true_beta[c(3, 4, 6)]<- 0
+
+# Now generate the output variables
+
+y <- rnorm(n, X %*% true_beta, 2)
+
+dat <- data.frame(y, X)
+
+
+```
+
+Now we can look at our fake data and true beta values:
+
+```{r }
+
+knitr::kable(head(dat[,1:10]), caption = "Example Data")
+knitr::kable(true_beta, caption = "True Beta Values for Regression", digits = 2)
+
+```
+
+# Step-wise Regression
+Generally stepwise regression has some pretty negative consequences. Because it used the data to train, it will result in higher values of AIC and over-estimate how well it fits the data. Regardless it is not a bad way to get a get a feel for ones data. I will do forwards and backwards selection as this will try to look and eliminate those parameters that not improve AIC both by adding variables from no variables to all variables and start with all variables and then remove them one at a time.
+
+```{r }
+library(leaps)
+
+fit_all <- lm(y ~ . , data = dat)
+
+fit_step <- step(fit_all, direction = "both", trace = FALSE)
+
+```
+
+Running the summary statement we can see which variables have been selected as being included in the model.
+
+```{r}
+summary(fit_step)
+```
+
+You could then take this model and predict new results as shown below where  I predict on a single row of the original data frame. 
+
+```{r}
+(pred <- predict(fit_step, newdata = dat[1,]))
+cbind(pred, true = dat[1,"y"])
+```
+
+Not a great fit in this example, but it gives one of the better OLS fitts
+
+# Regularization
+
+Regularization is used when you have a lot of variables and not a ton of data. It helps to shrink some parameters closer to zero. The lars package is nice because it will rapidly fit both Lasso (shrinks some parameters example to zero) and Ridge Regression (shrinks some parameters close to zero, but not exactly zero). The only pain is that it uses a slighty different notation for passing objects to it.
+
+```{r}
+library(lars)
+# Predictor matrix
+
+pred_x <- select(dat, -y) %>% 
+  as.matrix()
+
+pred_y <- pull(dat, y)
+
+# Fit Simple Object
+o <- lars(pred_x, pred_y, )
+
+# Cross Validation to Select Optimum
+set.seed(123)
+
+cv_lars <- cv.lars(pred_x, pred_y, plot.it=FALSE)
+
+# Pull out coefficients with lowest error 
+beta_lasso <- coef(o, s=cv_lars$index[which.min(cv_lars$cv)], 
+                   mode="fraction")
+```
+
+
+Now we can examine the fit:
+
+```{r}
+plot(beta_lasso, type="h", ylim=range(true_beta), main = "Beta Values")
+```
+
+Additionally, you can see the names or rank the coefficients:
+
+```{r}
+beta_lasso %>% 
+  as.data.frame() %>% 
+  rownames_to_column(var = "parameter") %>% 
+  arrange(-`.`)
+```
+
+# Tree Methods
+
+Tree based methods basically apply many, many decision trees that are then recombined into a single composite or ensemble model. RandomForest is one of the most popular methods. Random forests can be used for regression or prediction and are often accurate. However, they are less interprettable. They can give you an idea of the relative importance of a particular parameter on an outcome, but not a one to one relationship which OLS or the other regression techniques can.
+
+```{r}
+library(randomForest)
+
+fit_rf <- randomForest(y ~., data = dat, )
+
+```
+
+
+Now we can look at the variable importance as shown below.
+
+```{r}
+varImpPlot(fit_rf)
+```
+
+Ideally, you would tune the learning rate and number of trees, but the defaults work pretty well.
